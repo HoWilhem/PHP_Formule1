@@ -3,104 +3,90 @@
 namespace App\Controller;
 
 use App\Entity\Infraction;
-use App\Entity\Pilote;
-use App\Entity\Ecurie;
 use App\Repository\InfractionRepository;
+use App\Service\PiloteSuspensionService;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\Routing\Annotation\Route;
-use Symfony\Component\Validator\Validator\ValidatorInterface;
+use Symfony\Component\Security\Http\Attribute\IsGranted;
 
 #[Route('/api/infractions')]
 class InfractionController extends AbstractController
 {
-    #[Route('/', name: 'app_infractions_index', methods: ['GET'])]
-    public function index(
-        Request $request,
-        InfractionRepository $infractionRepository
-    ): JsonResponse {
-        $ecurieId = $request->query->get('ecurie');
+    #[Route('', name: 'api_infractions_list', methods: ['GET'])]
+    public function list(Request $request, InfractionRepository $repo): JsonResponse
+    {
         $piloteId = $request->query->get('pilote');
+        $ecurieId = $request->query->get('ecurie');
         $date = $request->query->get('date');
 
-        $infractions = $infractionRepository->findWithFilters($ecurieId, $piloteId, $date);
+        $infractions = $repo->search($piloteId, $ecurieId, $date);
 
         $data = [];
-        foreach ($infractions as $infraction) {
+        foreach ($infractions as $i) {
             $data[] = [
-                'id' => $infraction->getId(),
-                'nomCourse' => $infraction->getNomCourse(),
-                'description' => $infraction->getDescription(),
-                'dateInfraction' => $infraction->getDateInfraction()->format('Y-m-d H:i:s'),
-                'pointsPenalite' => $infraction->getPointsPenalite(),
-                'montantAmende' => $infraction->getMontantAmende(),
-                'pilote' => $infraction->getPilote() ? $infraction->getPilote()->getNomComplet() : null,
-                'ecurie' => $infraction->getEcurie() ? $infraction->getEcurie()->getNom() : null,
-                'type' => $infraction->getType()
+                'id' => $i->getId(),
+                'type' => $i->getType(),
+                'description' => $i->getDescription(),
+                'course' => $i->getCourse(),
+                'date' => $i->getDate()->format('Y-m-d'),
+                'points' => $i->getPoints(),
+                'montant' => $i->getMontant(),
+                'pilote' => $i->getPilote() ? $i->getPilote()->getNom() : null,
+                'ecurie' => $i->getEcurie() ? $i->getEcurie()->getNom() : null,
             ];
         }
 
-        return $this->json($data);
+        return new JsonResponse($data, 200);
     }
 
-    #[Route('/new', name: 'app_infractions_new', methods: ['POST'])]
-    public function new(
+    #[IsGranted('ROLE_ADMIN')]
+    #[Route('', name: 'api_infractions_add', methods: ['POST'])]
+    public function add(
         Request $request,
-        EntityManagerInterface $entityManager,
-        ValidatorInterface $validator
+        EntityManagerInterface $em,
+        PiloteSuspensionService $suspension
     ): JsonResponse {
         $data = json_decode($request->getContent(), true);
-
-        $infraction = new Infraction();
-        $infraction->setNomCourse($data['nomCourse'] ?? '');
-        $infraction->setDescription($data['description'] ?? '');
-        
-        if (isset($data['dateInfraction'])) {
-            $infraction->setDateInfraction(new \DateTime($data['dateInfraction']));
+        if (!$data) {
+            return new JsonResponse(['error' => 'Requête invalide'], 400);
         }
 
-        $infraction->setPointsPenalite($data['pointsPenalite'] ?? null);
-        $infraction->setMontantAmende($data['montantAmende'] ?? null);
+        $infraction = new Infraction();
+        $infraction->setDescription($data['description'] ?? '');
+        $infraction->setCourse($data['course'] ?? '');
+        $infraction->setDate(new \DateTime());
         $infraction->setType($data['type'] ?? '');
 
-        if ($infraction->getType() === 'driver' && isset($data['piloteId'])) {
-            $pilote = $entityManager->getRepository(Pilote::class)->find($data['piloteId']);
+        if (($data['type'] ?? '') === 'penalite') {
+            $infraction->setPoints($data['points'] ?? 0);
+        } elseif (($data['type'] ?? '') === 'amende') {
+            $infraction->setMontant($data['montant'] ?? 0);
+        }
+
+        if (!empty($data['pilote'])) {
+            $pilote = $em->getRepository('App\Entity\Pilote')->find($data['pilote']);
             if ($pilote) {
                 $infraction->setPilote($pilote);
-                
-                if ($infraction->getPointsPenalite()) {
-                    $nouveauxPoints = $pilote->getPointsLicence() - $infraction->getPointsPenalite();
-                    $pilote->setPointsLicence(max(0, $nouveauxPoints));
-                    
-                    if ($pilote->getPointsLicence() < 1) {
-                        $pilote->setSuspendu(true);
-                    }
+                if (isset($data['points'])) {
+                    $pilote->setPoints($pilote->getPoints() - $data['points']);
+                    $suspension->verifierSuspension($pilote);
                 }
             }
-        } elseif ($infraction->getType() === 'team' && isset($data['ecurieId'])) {
-            $ecurie = $entityManager->getRepository(Ecurie::class)->find($data['ecurieId']);
+        }
+
+        if (!empty($data['ecurie'])) {
+            $ecurie = $em->getRepository('App\Entity\Ecurie')->find($data['ecurie']);
             if ($ecurie) {
                 $infraction->setEcurie($ecurie);
             }
         }
 
-        $errors = $validator->validate($infraction);
-        if (count($errors) > 0) {
-            $errorMessages = [];
-            foreach ($errors as $error) {
-                $errorMessages[] = $error->getMessage();
-            }
-            return $this->json(['errors' => $errorMessages], 400);
-        }
+        $em->persist($infraction);
+        $em->flush();
 
-        $entityManager->persist($infraction);
-        $entityManager->flush();
-
-        return $this->json([
-            'message' => 'Infraction créée avec succès',
-            'id' => $infraction->getId()
-        ], 201);
+        return new JsonResponse(['message' => 'Infraction ajoutée avec succès'], 201);
     }
 }

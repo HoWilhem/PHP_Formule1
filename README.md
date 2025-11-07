@@ -1,4 +1,4 @@
-Participants : Wilhem HO et Nathan Bouche
+Participants : Wilhem HO et Nathan Bouché
 
 1. Installer les bonnes versions :
 

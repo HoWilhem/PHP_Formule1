@@ -1,0 +1,7 @@
+<ul>
+    {% for produit in product %}
+        <li>{{ loop.index }} - {{ produit.getName() }} - {{ produit.getUnitPrice() }}€ - {{ produit.getCreatedAt()|date('d/m/Y H:i') }} - {{ produit.getDescription() }}</li>
+    {% else %}
+        <li><em>no user found</em></li>
+    {% endfor %}
+</ul>

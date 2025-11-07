@@ -2,10 +2,12 @@
 
 namespace App\Entity;
 
+use App\Repository\InfractionRepository;
 use Doctrine\ORM\Mapping as ORM;
 
-#[ORM\Entity]
+#[ORM\Entity(repositoryClass: InfractionRepository::class)]
 #[ORM\Table(name: 'infraction')]
+
 class Infraction
 {
     #[ORM\Id]
